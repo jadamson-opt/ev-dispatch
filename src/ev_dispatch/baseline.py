@@ -95,9 +95,10 @@ class PriceThreshold(BasePolicy):
     The thresholds are fixed parameters, not learned.
     """
 
-    def __init__(self, charge_below: float = 60.0, discharge_above: float = 120.0):
+    def __init__(self, charge_below: float = 60.0, discharge_above: float = 120.0, soc_floor: float = 0.2):
         self.charge_below = charge_below  # £/MWh
         self.discharge_above = discharge_above
+        self.soc_floor = soc_floor  # Rule to prevent discharging below the floor
 
     def select_actions(
         self, fleet: Fleet, prices: np.ndarray, period: int
@@ -110,7 +111,7 @@ class PriceThreshold(BasePolicy):
                 actions.append(0.0)
             elif current_price < self.charge_below:
                 actions.append(asset.config.max_charge_rate_kw)
-            elif current_price > self.discharge_above:
+            elif current_price > self.discharge_above and asset.soc > self.soc_floor:
                 actions.append(-asset.config.max_discharge_rate_kw)
             else:
                 actions.append(0.0)
@@ -118,9 +119,9 @@ class PriceThreshold(BasePolicy):
         return np.array(actions)
 
 
-class HindsightOptimal(BasePolicy):
+class ForesightGreedy(BasePolicy):
     """
-    Greedy dispatch with perfect knowledge of future prices.
+    Greedy dispatch with perfect knowledge of future prices and departures.
 
     Charges at the cheapest available periods and discharges at the most
     expensive, subject to availability and a deadline-aware discharge rule:

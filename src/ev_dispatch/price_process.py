@@ -16,6 +16,8 @@ Prices are in £/MWh over 48 half-hour periods (one day).
 import numpy as np
 from dataclasses import dataclass, field
 
+from ev_dispatch import FloatArray
+
 
 @dataclass
 class PriceProcessConfig:
@@ -67,13 +69,13 @@ class PriceProcess:
         self.rng = np.random.default_rng(seed)
         self._daily_cycle_offsets = np.array(config.daily_cycle_offsets)
 
-    def sample_scenario(self) -> np.ndarray:
+    def sample_scenario(self) -> FloatArray:
         """
         Generate one price scenario over a full day.
 
         Returns
         -------
-        np.ndarray
+        FloatArray
             Array of shape (periods_per_day,) with prices in £/MWh.
             Prices are clipped to a minimum of 0.
         """
@@ -90,13 +92,13 @@ class PriceProcess:
 
         return prices
 
-    def sample_scenarios(self, n: int) -> np.ndarray:
+    def sample_scenarios(self, n: int) -> FloatArray:
         """
         Generate multiple independent price scenarios.
 
         Returns
         -------
-        np.ndarray
+        FloatArray
             Array of shape (n, periods_per_day).
         """
         return np.stack([self.sample_scenario() for _ in range(n)])

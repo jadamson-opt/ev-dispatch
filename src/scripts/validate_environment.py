@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 from ev_dispatch.price_process import PriceProcess, PriceProcessConfig
 from ev_dispatch.ev_asset import EVConfig, UserProfile
 from ev_dispatch.fleet import Fleet, FleetConfig
-from ev_dispatch.baseline import NaiveNightCharger, PriceThreshold, HindsightOptimal
+from ev_dispatch.baseline import NaiveNightCharger, PriceThreshold, ForesightGreedy
 
 N_SCENARIOS = 100
 SEED = 42
@@ -53,7 +53,7 @@ def plot_example_episode(fleet, scenarios, seed=0):
     policies = {
         "Naive": NaiveNightCharger(),
         # "Threshold": PriceThreshold(),
-        "Hindsight": HindsightOptimal(),
+        "Hindsight": ForesightGreedy(),
     }
 
     for name, policy in policies.items():
@@ -83,7 +83,7 @@ def main():
 
     naive = NaiveNightCharger()
     threshold = PriceThreshold()
-    hindsight = HindsightOptimal()
+    hindsight = ForesightGreedy()
 
     print(f"Running {N_SCENARIOS} scenarios with {fleet_config.n_assets} assets...")
 

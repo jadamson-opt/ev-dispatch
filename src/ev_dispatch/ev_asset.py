@@ -35,13 +35,14 @@ class UserProfile:
     """
 
     plugin_period_mean: float = 4.0  # ~6pm if episode starts at 4pm
-    plugin_period_std: float = 4.0
+    plugin_period_std: float = 1.0
     departure_period_mean: float = 30.0  # ~7am next day
-    departure_period_std: float = 2.0
+    departure_period_std: float = 1.0
     required_soc: float = 0.8
     return_soc_mean: float = 0.3  # SOC when they plug in
     return_soc_std: float = 0.1
-    unplanned_departure_probability: float = 0.05  # Captures unexpected usage
+    # unplanned_departure_probability: float = 0.05  # Captures unexpected usage
+    unplanned_departure_probability: float = 0.0
     unplanned_trip_duration_periods: int = 4  # ~2 hours away
     unplanned_required_soc: float = 0.15  # Minimum needed for the unplanned trip
 
@@ -55,7 +56,6 @@ class EVConfig:
     max_discharge_rate_kw: float = 7.4
     charge_efficiency: float = 0.92
     discharge_efficiency: float = 0.92
-    soc_floor: float = 0.2  # Minimum dispatchable SOC
     period_duration_hours: float = 0.5  # Half-hourly
 
 
@@ -106,7 +106,7 @@ class EVAsset:
         )
         self.soc = self._starting_soc
 
-        plugin_period = int(
+        plugin_period = round(
             np.clip(
                 self._rng.normal(
                     self.profile.plugin_period_mean, self.profile.plugin_period_std
@@ -116,7 +116,7 @@ class EVAsset:
             )
         )
 
-        planned_departure_period = int(
+        planned_departure_period = round(
             np.clip(
                 self._rng.normal(
                     self.profile.departure_period_mean,
@@ -139,7 +139,7 @@ class EVAsset:
             - self.profile.unplanned_trip_duration_periods
             - 1
         ):
-            unplanned_departure = int(plugin_period + self._rng.integers(1, 4))  # leaves within 2 hours of getting home
+            unplanned_departure = round(plugin_period + self._rng.integers(1, 4))  # leaves within 2 hours of getting home
             return_period = (
                 unplanned_departure + self.profile.unplanned_trip_duration_periods
             )
@@ -251,10 +251,8 @@ class EVAsset:
             max_action = min(cfg.max_charge_rate_kw, max_charge_kwh / period_hours)
             return min(action_kw, max_action)
         elif action_kw < 0:  # Discharging
-            # SOC floor limits how much can be discharged
-            dispatchable_soc = max(self.soc - cfg.soc_floor, 0.0)
             max_discharge_kwh = (
-                dispatchable_soc * cfg.battery_capacity_kwh * cfg.discharge_efficiency
+                self.soc * cfg.battery_capacity_kwh * cfg.discharge_efficiency
             )
             max_action = min(
                 cfg.max_discharge_rate_kw, max_discharge_kwh / period_hours

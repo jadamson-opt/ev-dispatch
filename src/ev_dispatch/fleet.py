@@ -120,11 +120,9 @@ class Fleet:
     def available_discharge_capacity_kw(self, period: int) -> float:
         """Total dispatchable discharge capacity across available assets (kW)."""
         return sum(
-            (a.soc - a.config.soc_floor)
-            * a.config.battery_capacity_kwh
-            / a.config.period_duration_hours
+            a.soc * a.config.battery_capacity_kwh / a.config.period_duration_hours
             for a in self.assets
-            if a.is_plugged_in(period) and a.soc > a.config.soc_floor
+            if a.is_plugged_in(period) and a.soc > 0
         )
 
     def _apply_portfolio_buffer(self, requested_actions_kw: np.ndarray, period: int) -> np.ndarray:

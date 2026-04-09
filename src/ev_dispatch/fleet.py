@@ -21,7 +21,7 @@ class FleetConfig:
     """Operational parameters for the fleet aggregator."""
 
     n_assets: int = 500
-    wfh_fraction: float = 0.0
+    wfh_fraction: float = 0.4
     portfolio_buffer_fraction: float = (
         0.2  # Reserve this fraction of available capacity
     )
@@ -48,6 +48,7 @@ class Fleet:
         seed: int | None = None,
     ):
         self.config = config
+        self.ev_config = asset_config
         self.rng = np.random.default_rng(seed)
 
         # Spawn independent child generators from master seed so all asset
@@ -90,10 +91,11 @@ class Fleet:
         -------
         dict with keys:
             total_energy_kwh: Net energy dispatched (positive = charged)
-            revenue: £ revenue this period (negative = cost of charging)
+            penalised_revenue: £ revenue this period (negative = cost of charging) - penalty
             total_penalty: Deadline penalties incurred
             mean_soc: Fleet mean SOC after actions
             n_available: Number of plugged-in assets
+            asset_energies_kwh: Array of shape (n_assets,) with asset charge/discharge in kwh
         """
         plugged_in_mask = np.array([a.is_plugged_in(period) for a in self.assets])
         scaled_actions = self._apply_portfolio_buffer(
@@ -102,9 +104,11 @@ class Fleet:
 
         total_energy_kwh = 0.0
         total_penalty = 0.0
+        asset_energies_kwh = np.zeros(self.config.n_assets)
 
         for i, asset in enumerate(self.assets):
             _, energy_kwh = asset.apply_action(scaled_actions[i], period)
+            asset_energies_kwh[i] = energy_kwh
             total_energy_kwh += energy_kwh
             total_penalty += asset.deadline_penalty(period)
 
@@ -113,10 +117,11 @@ class Fleet:
 
         return {
             "total_energy_kwh": total_energy_kwh,
-            "revenue": revenue - total_penalty,
+            "penalised_revenue": revenue - total_penalty,
             "total_penalty": total_penalty,
             "mean_soc": mean_soc,
             "n_plugged_in": int(plugged_in_mask.sum()),
+            "asset_energies_kwh": asset_energies_kwh,
         }
 
     def soc_array(self) -> np.ndarray:

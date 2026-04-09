@@ -27,7 +27,7 @@ N_EVAL_SCENARIOS = 200
 
 def main() -> None:
     price_config = PriceProcessConfig()
-    fleet_config = FleetConfig(n_assets=200)
+    fleet_config = FleetConfig(n_assets=500)
     asset_config = EVConfig()
 
     # --- Training ---
@@ -66,7 +66,7 @@ def main() -> None:
     plot_revenue_distributions(results).show()
     plot_example_episode(policies, fleet, example_prices).show()
     plot_shadow_prices(vfa_registry).show()
-    plot_training_convergence(trainer.episode_revenues, trainer.episode_arbitrage_revenues).show()
+    plot_training_convergence(trainer.episode_penalised_revenues, trainer.episode_arbitrage_revenues).show()
 
 
 if __name__ == "__main__":

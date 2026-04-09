@@ -50,7 +50,7 @@ def evaluate_policies(
 
         for prices in price_scenarios:
             episode = policy.run_episode(fleet, prices)
-            revenues.append(episode["total_revenue"])
+            revenues.append(episode["total_penalised_revenue"])
             penalties.append(episode["total_penalty"])
             soc_histories.append(episode["soc_history"])
             revenue_histories.append(episode["revenue_history"])

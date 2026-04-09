@@ -96,6 +96,26 @@ class EVConfig:
     discharge_efficiency: float = 0.92
     period_duration_hours: float = 0.5  # Half-hourly
 
+    @property
+    def max_charge_per_period(self) -> float:
+        """Maximum SOC increase achievable in one period at full charge rate."""
+        return (
+            self.max_charge_rate_kw
+            * self.period_duration_hours
+            * self.charge_efficiency
+            / self.battery_capacity_kwh
+        )
+
+    @property
+    def max_discharge_per_period(self) -> float:
+        """Maximum SOC decrease from one period of full discharge."""
+        return (
+            self.max_discharge_rate_kw
+            * self.period_duration_hours
+            / self.discharge_efficiency
+            / self.battery_capacity_kwh
+        )
+
 
 class EVAsset:
     """
@@ -206,24 +226,12 @@ class EVAsset:
     @property
     def max_charge_per_period(self) -> float:
         """Maximum SOC increase achievable in one period at full charge rate."""
-        cfg = self.config
-        return (
-            cfg.max_charge_rate_kw
-            * cfg.period_duration_hours
-            * cfg.charge_efficiency
-            / cfg.battery_capacity_kwh
-        )
+        return self.config.max_charge_per_period
 
     @property
     def max_discharge_per_period(self) -> float:
         """Maximum SOC decrease from one period of full discharge."""
-        cfg = self.config
-        return (
-            cfg.max_discharge_rate_kw
-            * cfg.period_duration_hours
-            / cfg.discharge_efficiency
-            / cfg.battery_capacity_kwh
-        )
+        return self.config.max_discharge_per_period
 
     def _sample_commuter_windows(self, profile: CommuterProfile) -> list[PluginWindow]:
         """

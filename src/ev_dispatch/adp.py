@@ -34,7 +34,6 @@ class ADPConfig:
     """Parameters controlling the ADP training procedure."""
 
     n_training_episodes: int = 2000
-    # epsilon: float = 0.1  # Exploration rate for epsilon-greedy action selection
     epsilon: float = 0.02  # Exploration rate for epsilon-greedy action selection
     epsilon_decay: float = 0.995  # Multiplicative decay applied each episode
     forcing_buffer: float = 2.0  # Multiplier on departure_period_std for when to force charging ahead of planned departure
@@ -103,11 +102,12 @@ class ADPPolicy(BasePolicy):
                 continue
 
             vfa = self.vfa_registry[asset.profile.asset_type]
-            shadow_price = vfa.shadow_price(asset.soc, period)
+            shadow_price_per_soc = vfa.shadow_price(asset.soc, period)
+            shadow_price_per_mwh = shadow_price_per_soc / (asset.config.battery_capacity_kwh / 1000)
 
-            if current_price < shadow_price:
+            if current_price < shadow_price_per_mwh:
                 actions.append(asset.config.max_charge_rate_kw)
-            elif current_price > shadow_price and not should_prevent_discharge:
+            elif current_price > shadow_price_per_mwh and not should_prevent_discharge:
                 actions.append(-asset.config.max_discharge_rate_kw)
             else:
                 actions.append(0.0)
@@ -214,9 +214,10 @@ class ADPTrainer:
             config=vfa_config,
             periods_per_day=fleet.config.periods_per_day,
             last_commuter_departure=int(last_commuter_expected_departure),
-            max_discharge_per_period=fleet.assets[0].max_discharge_per_period,
+            max_discharge_per_period=fleet.ev_config.max_discharge_per_period,
+            battery_capacity_kwh=fleet.ev_config.battery_capacity_kwh,
         )
-        self.episode_revenues: list[float] = []
+        self.episode_penalised_revenues: list[float] = []
         self.episode_arbitrage_revenues: list[float] = []
 
     # @profile
@@ -234,21 +235,24 @@ class ADPTrainer:
             policy = ADPPolicy(
                 self.vfa_registry, epsilon=epsilon, forcing_buffer=cfg.forcing_buffer, soc_floor=cfg.soc_floor
             )
-            episode_revenue, episode_arbitrage = self._run_training_episode(
+            episode_penalised_revenue, episode_arbitrage = self._run_training_episode(
                 prices, policy
             )
 
-            self.episode_revenues.append(episode_revenue)
+            self.episode_penalised_revenues.append(episode_penalised_revenue)
             self.episode_arbitrage_revenues.append(episode_arbitrage)
             epsilon *= cfg.epsilon_decay
 
             if (episode + 1) % 100 == 0:
-                mean_revenue = np.mean(self.episode_revenues[-100:])
+                mean_penalised_revenue = np.mean(self.episode_penalised_revenues[-100:])
                 mean_arbitrage = np.mean(self.episode_arbitrage_revenues[-100:])
                 print(
                     f"Episode {episode + 1}: "
-                    f"mean revenue (last 100) = £{mean_revenue:.2f}  "
+                    f"mean penalised revenue (last 100) = £{mean_penalised_revenue:.2f}  "
                     f"mean arbitrage (last 100) = £{mean_arbitrage:.2f}  "
+                    f"mean penalty (last 100) = £{(mean_arbitrage-mean_penalised_revenue):.2f}  "
+                    f"Commuter mean slope: {self.vfa_registry[AssetType.COMMUTER].slopes.mean():.2f}  "
+                    f"WFH mean slope: {self.vfa_registry[AssetType.WFH].slopes.mean():.2f}  "
                 )
 
         return self.vfa_registry
@@ -260,12 +264,12 @@ class ADPTrainer:
         Run one episode, updating each type VFA after each transition.
 
         Returns:
-            (total_revenue, total_arbitrage_revenue) where total_revenue
+            (total_penalised_revenue, total_arbitrage_revenue) where total_penalised_revenue
             includes penalties and total_arbitrage_revenue does not
 
         """
         self.fleet.reset()
-        total_revenue = 0.0
+        total_penalised_revenue = 0.0
         total_arbitrage_revenue = 0.0
 
         for period in range(self.fleet.config.periods_per_day):
@@ -274,11 +278,11 @@ class ADPTrainer:
             result = self.fleet.step(actions, prices[period], period)
             socs_after = self.fleet.soc_array()
 
-            total_revenue += result["revenue"]
-            total_arbitrage_revenue += result["revenue"] + result["total_penalty"]
-            self._update_vfas(socs_before, socs_after, result, period)
+            total_penalised_revenue += result["penalised_revenue"]
+            total_arbitrage_revenue += result["penalised_revenue"] + result["total_penalty"]
+            self._update_vfas(socs_before, socs_after, result, period, prices[period])
 
-        return total_revenue, total_arbitrage_revenue
+        return total_penalised_revenue, total_arbitrage_revenue
 
     def _update_vfas(
         self,
@@ -286,6 +290,7 @@ class ADPTrainer:
         socs_after: np.ndarray,
         step_result: dict,
         period: int,
+        price_per_mwh: float
     ) -> None:
         """
         Update VFA slopes for each asset using a TD target based on arbitrage revenue only.
@@ -300,18 +305,20 @@ class ADPTrainer:
         Learning rate is normalised by n_available for stability.
         """
         n_plugged_in = max(step_result["n_plugged_in"], 1)
-        arbitrage_revenue = step_result["revenue"] + step_result["total_penalty"]
-        reward_per_asset = arbitrage_revenue / n_plugged_in
+
+        # Discharging (-) to grid earns revenue, so we add a negative sign
+        asset_arbitrage_revenues = - step_result["asset_energies_kwh"] * price_per_mwh / 1000
         is_terminal = period == self.fleet.config.periods_per_day - 1
 
-        for asset, soc_before, soc_after in zip(
+        for idx, (asset, soc_before, soc_after) in enumerate(zip(
             self.fleet.assets, socs_before, socs_after
-        ):
+        )):
             if not asset.is_plugged_in(period):
                 continue
 
             vfa = self.vfa_registry[asset.profile.asset_type]
             effective_learning_rate = vfa.config.learning_rate / n_plugged_in
             next_value = 0.0 if is_terminal else vfa.value(soc_after, period + 1)
-            td_target = reward_per_asset + vfa.config.discount_factor * next_value
+
+            td_target = asset_arbitrage_revenues[idx] + vfa.config.discount_factor * next_value
             vfa.update(soc_before, period, td_target, effective_learning_rate)

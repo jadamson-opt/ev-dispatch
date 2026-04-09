@@ -42,10 +42,10 @@ class BasePolicy(ABC):
 
         Returns
         -------
-        dict with keys: total_revenue, total_penalty, soc_history, revenue_history
+        dict with keys: total_penalised_revenue, total_penalty, soc_history, revenue_history
         """
         fleet.reset()
-        total_revenue = 0.0
+        total_penalised_revenue = 0.0
         total_penalty = 0.0
         soc_history = []
         revenue_history = []
@@ -54,14 +54,14 @@ class BasePolicy(ABC):
         for period in range(fleet.config.periods_per_day):
             actions = self.select_actions(fleet, prices, period)
             result = fleet.step(actions, prices[period], period)
-            total_revenue += result["revenue"]
+            total_penalised_revenue += result["penalised_revenue"]
             total_penalty += result["total_penalty"]
             soc_history.append(result["mean_soc"])
-            revenue_history.append(result["revenue"])
+            revenue_history.append(result["penalised_revenue"])
             penalty_history.append(result["total_penalty"])
 
         return {
-            "total_revenue": total_revenue,
+            "total_penalised_revenue": total_penalised_revenue,
             "total_penalty": total_penalty,
             "soc_history": soc_history,
             "revenue_history": revenue_history,

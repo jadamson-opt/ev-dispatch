@@ -15,11 +15,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from ev_dispatch import FloatArray
+from ev_dispatch.ev_asset import AssetType
 from ev_dispatch.fleet import Fleet
-from ev_dispatch.price_process import PriceProcess
 from ev_dispatch.baseline import BasePolicy
 from ev_dispatch.value_function import AssetValueFunction
-from ev_dispatch.adp import ADPPolicy
 
 
 def evaluate_policies(
@@ -96,39 +95,79 @@ def plot_example_episode(
     periods_per_day: int = 48,
 ) -> go.Figure:
     """
-    Plot SOC trajectories, cumulative revenue, and price for one episode.
+    Plot price, mean fleet SOC, cumulative revenue, and cumulative arbitrage
+    revenue for one episode across all policies.
 
-    Runs each policy on the same price scenario for a direct comparison.
+    Each policy gets a consistent colour across all subplots. A single shared
+    legend controls visibility across all traces.
     """
     hours = np.arange(periods_per_day) * 0.5
+    colours = [
+        "steelblue", "crimson", "seagreen", "darkorange", "mediumpurple"
+    ]
+
     fig = make_subplots(
-        rows=3, cols=1,
+        rows=4, cols=1,
         shared_xaxes=True,
-        subplot_titles=("Electricity Price", "Mean Fleet SOC", "Cumulative Revenue (£)"),
-        vertical_spacing=0.08,
+        subplot_titles=(
+            "Electricity Price",
+            "Mean Fleet SOC",
+            "Cumulative Revenue (£)",
+            "Cumulative Arbitrage Revenue (£)",
+        ),
+        vertical_spacing=0.07,
     )
 
-    fig.add_trace(go.Scatter(x=hours, y=prices, name="Price", line=dict(color="steelblue")), row=1, col=1)
+    fig.add_trace(
+        go.Scatter(x=hours, y=prices, name="Price", line=dict(color="grey"),
+                   showlegend=False),
+        row=1, col=1,
+    )
 
-    for name, policy in policies.items():
+    for (name, policy), colour in zip(policies.items(), colours):
         episode = policy.run_episode(fleet, prices)
-        fig.add_trace(go.Scatter(x=hours, y=episode["soc_history"], name=name), row=2, col=1)
-        fig.add_trace(go.Scatter(
-            x=hours,
-            y=np.cumsum(episode["revenue_history"]),
-            name=name,
-            showlegend=False,
-        ), row=3, col=1)
+        cumulative_revenue = np.cumsum(episode["revenue_history"])
+        arbitrage_history = [
+            r + p for r, p in zip(episode["revenue_history"], episode["penalty_history"])
+        ]
+        cumulative_arbitrage = np.cumsum(arbitrage_history)
 
-    fig.update_xaxes(title_text="Hours from 4pm", row=3, col=1)
+        # SOC — show in legend
+        fig.add_trace(
+            go.Scatter(x=hours, y=episode["soc_history"], name=name,
+                       line=dict(color=colour), legendgroup=name),
+            row=2, col=1,
+        )
+        # Revenue — same colour, linked to same legend entry
+        fig.add_trace(
+            go.Scatter(x=hours, y=cumulative_revenue, name=name,
+                       line=dict(color=colour), legendgroup=name, showlegend=False),
+            row=3, col=1,
+        )
+        # Arbitrage revenue — same colour, linked to same legend entry
+        fig.add_trace(
+            go.Scatter(x=hours, y=cumulative_arbitrage, name=name,
+                       line=dict(color=colour), legendgroup=name, showlegend=False),
+            row=4, col=1,
+        )
+
+    fig.update_xaxes(title_text="Hours from 4pm", row=4, col=1)
     fig.update_yaxes(title_text="£/MWh", row=1, col=1)
     fig.update_yaxes(title_text="SOC", row=2, col=1)
     fig.update_yaxes(title_text="£", row=3, col=1)
-    fig.update_layout(title="Example Episode — Policy Comparison", height=700)
+    fig.update_yaxes(title_text="£", row=4, col=1)
+    fig.update_layout(
+        title="Example Episode — Policy Comparison",
+        height=900,
+        legend=dict(tracegroupgap=0),
+    )
     return fig
 
 
-def plot_shadow_prices(vfa: AssetValueFunction, periods_to_plot: list[int] | None = None) -> go.Figure:
+def plot_shadow_prices(
+        vfa_registry: dict[AssetType, AssetValueFunction],
+        periods_to_plot: list[int] | None = None
+) -> go.Figure:
     """
     Plot VFA shadow price curves (slopes) across SOC for selected periods.
 
@@ -138,29 +177,42 @@ def plot_shadow_prices(vfa: AssetValueFunction, periods_to_plot: list[int] | Non
 
     Parameters
     ----------
+    vfa_registry:
+        Dict mapping AssetType to AssetValueFunction
     periods_to_plot:
         List of period indices to show. Defaults to six evenly spaced periods.
     """
     if periods_to_plot is None:
         periods_to_plot = [0, 8, 16, 24, 32, 40]
 
-    soc_values = vfa.breakpoints[:-1] + vfa.segment_width / 2  # midpoints
-    hours_from_4pm = [p * 0.5 for p in periods_to_plot]
+    asset_types = list(vfa_registry.keys())
+    fig = make_subplots(
+        rows=1, cols=len(asset_types),
+        subplot_titles=[f"{at.value.upper()} VFA" for at in asset_types],
+    )
 
-    fig = go.Figure()
-    for period, hour in zip(periods_to_plot, hours_from_4pm):
-        label = f"{_period_to_clock(period)}"
-        fig.add_trace(go.Scatter(
-            x=soc_values,
-            y=vfa.slopes_at_period(period),
-            name=label,
-            mode="lines+markers",
-        ))
+    for col, asset_type in enumerate(asset_types, start=1):
+        vfa = vfa_registry[asset_type]
+        soc_values = vfa.breakpoints[:-1] + vfa.segment_width / 2
 
+        for period in periods_to_plot:
+            label = _period_to_clock(period)
+            fig.add_trace(
+                go.Scatter(
+                    x=soc_values,
+                    y=vfa.slopes_at_period(period),
+                    name=label,
+                    legendgroup=label,
+                    showlegend=(col == 1),
+                    mode="lines+markers",
+                ),
+                row=1, col=col,
+            )
+
+    fig.update_xaxes(title_text="State of Charge")
+    fig.update_yaxes(title_text="Shadow Price (£/MWh equivalent)", col=1)
     fig.update_layout(
-        title="VFA Shadow Prices by SOC and Time of Day",
-        xaxis_title="State of Charge",
-        yaxis_title="Shadow Price (£/MWh equivalent)",
+        title="VFA Shadow Prices by Asset Type",
         legend_title="Time",
     )
     return fig

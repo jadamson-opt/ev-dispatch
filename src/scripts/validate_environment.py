@@ -82,22 +82,18 @@ def main():
     fleet = Fleet(fleet_config, asset_config, user_profile, seed=SEED)
 
     naive = NaiveNightCharger()
-    threshold = PriceThreshold()
     hindsight = ForesightGreedy()
 
     print(f"Running {N_SCENARIOS} scenarios with {fleet_config.n_assets} assets...")
 
     naive_rev, naive_pen = run_policy_over_scenarios(naive, fleet, scenarios)
-    thresh_rev, thresh_pen = run_policy_over_scenarios(threshold, fleet, scenarios)
     hint_rev, hint_pen = run_policy_over_scenarios(hindsight, fleet, scenarios)
 
     print_summary("NaiveNightCharger", naive_rev, naive_pen)
-    print_summary("PriceThreshold", thresh_rev, thresh_pen)
     print_summary("HindsightOptimal", hint_rev, hint_pen)
 
-    print("\nSanity check — revenue ordering (should be Hindsight > Threshold > Naive):")
-    print(f"  Hindsight mean > Threshold mean: {hint_rev.mean() > thresh_rev.mean()}")
-    print(f"  Threshold mean > Naive mean:     {thresh_rev.mean() > naive_rev.mean()}")
+    print("\nSanity check — Hindsight should beat Naive:")
+    print(f"  Hindsight mean > Naive mean:     {hint_rev.mean() > naive_rev.mean()}")
 
     plot_example_episode(fleet, scenarios)
 

@@ -1,44 +1,50 @@
 """
 Fleet aggregator.
 
-Manages a collection of EV assets, enforces the portfolio capacity buffer,
-and coordinates dispatch decisions across assets at each timestep.
+Manages a heterogeneous collection of EV assets (commuters and WFH users),
+enforces the portfolio capacity buffer, and coordinates dispatch decisions
+across assets at each timestep.
+
+Profiles are generated per-asset at construction time, with commuter departure
+means sampled from U(28, 32) and std devs from U(1, 2), giving some
+heterogeneity across the fleet.
 """
 
 import numpy as np
 from dataclasses import dataclass
 
-from ev_dispatch.ev_asset import EVAsset, EVConfig, UserProfile
+from ev_dispatch.ev_asset import EVAsset, EVConfig, CommuterProfile, WFHProfile
 
 
 @dataclass
 class FleetConfig:
     """Operational parameters for the fleet aggregator."""
 
-    n_assets: int = 50
+    n_assets: int = 500
+    wfh_fraction: float = 0.0
     portfolio_buffer_fraction: float = (
         0.2  # Reserve this fraction of available capacity
     )
     periods_per_day: int = 48
     period_duration_hours: float = 0.5
-    energy_price_per_mwh: float = 80.0  # Default if no external price passed
 
 
 class Fleet:
     """
     Aggregates EV assets and manages portfolio-level dispatch.
 
+    Commuter and WFH assets are constructed with individually sampled profiles,
+    giving somewhat realistic variation in departure times and usage patterns across
+    the fleet.
+
     The portfolio buffer ensures a fraction of available capacity is always
     held in reserve against unplanned departures or grid commitment shortfalls.
-    At each timestep, the aggregator accepts per-asset action requests,
-    scales them back if the buffer would be breached, then applies them.
     """
 
     def __init__(
         self,
         config: FleetConfig,
         asset_config: EVConfig,
-        user_profile: UserProfile,
         seed: int | None = None,
     ):
         self.config = config
@@ -51,7 +57,7 @@ class Fleet:
             EVAsset(
                 asset_id=f"ev_{i}",
                 config=asset_config,
-                profile=user_profile,
+                profile=self._sample_profile(i, config),
                 rng=child_rngs[i],
             )
             for i in range(config.n_assets)
@@ -123,6 +129,24 @@ class Fleet:
             a.soc * a.config.battery_capacity_kwh / a.config.period_duration_hours
             for a in self.assets
             if a.is_plugged_in(period) and a.soc > 0
+        )
+
+    def _sample_profile(self, asset_index: int, config: FleetConfig) -> CommuterProfile | WFHProfile:
+        """
+        Sample an individual user profile for one asset.
+
+        WFH fraction determines asset type. Commuter departure means are
+        sampled from U(28, 32) and std devs from U(1, 2) to give realistic
+        heterogeneity in departure patterns across the fleet.
+        """
+        is_wfh = asset_index < int(config.n_assets * config.wfh_fraction)
+
+        if is_wfh:
+            return WFHProfile()
+
+        return CommuterProfile(
+            departure_period_mean=float(self.rng.triangular(28, 30, 32)),
+            departure_period_std=1.0,
         )
 
     def _apply_portfolio_buffer(self, requested_actions_kw: np.ndarray, period: int) -> np.ndarray:

@@ -1,10 +1,17 @@
 """
 Piecewise-linear concave value function approximation (VFA) for a representative EV asset.
 
-The VFA approximates the expected future revenue achievable from a given SOC
-at a given time period, under the best attainable policy from that point forward.
+Maintains one VFA per asset type (commuter, WFH). Each VFA approximates
+the expected future arbitrage revenue achievable from a given SOC at a given
+time period, under the best attainable policy from that point forward.
 
-Represented as a piecewise-linear concave function over SOC in [0, 1], with one
+Commuter VFA: slopes taper toward zero near the expected last departure,
+reflecting that stored energy has no value after assets have left.
+
+WFH VFA: slopes are uniform across time periods since WFH assets are
+available throughout the day. Only the concave SOC shape is initialised.
+
+Te VFA is represented as a piecewise-linear concave function over SOC in [0, 1], with one
 set of slopes per timestep. Concavity is maintained after each update, reflecting
 the diminishing marginal returns of additional stored energy.
 
@@ -12,8 +19,12 @@ The slope at a given SOC is the shadow price. This is the marginal value of one 
 kWh stored at that point, which is broadcast to assets as their dispatch signal.
 """
 
-import numpy as np
 from dataclasses import dataclass
+
+import numpy as np
+
+from ev_dispatch import FloatArray
+from ev_dispatch.ev_asset import AssetType
 
 
 @dataclass
@@ -22,9 +33,7 @@ class VFAConfig:
 
     n_segments: int = 10          # Number of piecewise-linear segments over [0, 1]
     # learning_rate: float = 0.05   # Step size for slope updates
-    learning_rate: float = 1.0    # Step size for slope updates — intended to be normalised
-                                  # by n_available in the trainer, giving effective per-asset
-                                  # rate of learning_rate / n_available per period
+    learning_rate: float = 1.0    # Step size for slope updates — normalised by n_available in the trainer
     discount_factor: float = 0.99
     mean_price: float = 80.0  # Long-run mean price (£/MWh)
 
@@ -35,50 +44,34 @@ class AssetValueFunction:
 
     Stores one set of slopes per timestep. The value at a given SOC is obtained
     by integrating slopes from 0 up to that SOC. Concavity is enforced after
-    each update by projecting slopes onto the non-increasing cone.
-
-    Slopes are zeroed out for periods beyond the expected availability horizon,
-    preventing the TD bootstrap from pulling current-period values toward
-    stale initialised estimates in periods where no assets are ever present.
+    each update along with a zero lower bound.
 
     All SOC values are fractions in [0, 1]. Slopes are in £/MWh equivalent,
     representing the marginal value of moving one SOC unit (i.e. full battery
     capacity) of stored energy.
+
+    Slopes are initialised with a simple heuristic dependent on asset type.
     """
 
     def __init__(
             self,
             config: VFAConfig,
+            asset_type: AssetType,
             periods_per_day: int,
-            last_available_period: int,
+            expected_last_plugged_in_period: int,
             max_discharge_per_period: float
     ):
         self.config = config
+        self.asset_type = asset_type
         self.periods_per_day = periods_per_day
 
         breakpoints = np.linspace(0.0, 1.0, config.n_segments + 1)
         self.breakpoints = breakpoints
         self.segment_width = breakpoints[1] - breakpoints[0]
 
-       #  soc_starts = np.array([k / config.n_segments for k in range(config.n_segments)])
-       #  initial_slopes = config.mean_price * (2.0 - soc_starts)  # exactly 2x mean at k=0, ~1x at k=n-1
-       #  self.slopes = np.tile(initial_slopes, (periods_per_day, 1))
-
-        # Initialise slopes with a concave shape: high marginal value at low SOC,
-        # decreasing toward mean_price at full SOC. This prevents the policy from
-        # discharging to zero in early episodes before the VFA has learned, by
-        # making the last units of stored energy appear expensive to lose.
-        # The slopes also taper towards zero near expected departure, since revenue
-        # is limited by how much energy can be discharged before then.
-        soc_starts = np.array([k / config.n_segments for k in range(config.n_segments)])
-
-        self.slopes = np.zeros((periods_per_day, config.n_segments))
-        for t in range(periods_per_day):
-            periods_remaining = max(last_available_period - t, 0)
-            max_dischargeable_soc = min(periods_remaining * max_discharge_per_period, 1.0)
-            max_value = max_dischargeable_soc * config.mean_price
-            # Concave shape across SOC segments, scaled by physically reachable revenue
-            self.slopes[t] = max_value * (2.0 - soc_starts)  # exactly 2x mean at k=0, ~1x at k=n-1
+        self.slopes = self._initialise_slopes(
+            asset_type, expected_last_plugged_in_period, max_discharge_per_period
+        )
 
     def value(self, soc: float, period: int) -> float:
         """
@@ -87,7 +80,7 @@ class AssetValueFunction:
         Computed by integrating slopes from 0 to soc to get the accumulated
         value up to that specific SOC point.
         """
-        soc = float(np.clip(soc, 0.0, 1.0))
+        soc = min(max(soc, 0.0), 1.0)
         segment_values = self.slopes[period] * self.segment_width
         cumulative_values = np.concatenate([[0.0], np.cumsum(segment_values)])
 
@@ -105,7 +98,7 @@ class AssetValueFunction:
         This is the slope of the value function at the given SOC. It is the signal
         broadcast to assets to drive their charge/discharge decisions.
         """
-        soc = float(np.clip(soc, 0.0, 1.0))
+        soc = min(max(soc, 0.0), 1.0)
         seg = self._get_segment_index(soc)
         return float(self.slopes[period, seg])
 
@@ -116,6 +109,9 @@ class AssetValueFunction:
         The target is the temporal difference (TD) estimate: immediate reward
         + discounted next-period value.
         After updating the slope, concavity is enforced across all segments.
+
+        Skips update when SOC is too close to zero since current_value is
+        always zero there, producing unreliable large positive errors.
 
         Parameters
         ----------
@@ -145,6 +141,39 @@ class AssetValueFunction:
         """Return the full slope array for a given period (for inspection/plotting)."""
         return self.slopes[period].copy()
 
+    def _initialise_slopes(
+            self,
+            asset_type: AssetType,
+            last_available_period: int,
+            max_discharge_per_period: float,
+    ) -> FloatArray:
+        """
+        Initialise slopes using an expectation of future revenue.
+
+        For commuters: slopes scale with how much energy can physically be
+        discharged before last departure, times the expected price.
+        This produces a natural taper toward zero near the departure horizon.
+
+        For WFH: slopes are uniform across periods since assets are available
+        throughout the day. Only the concave SOC shape is applied.
+        """
+        cfg = self.config
+        soc_starts = np.array([k / cfg.n_segments for k in range(cfg.n_segments)])
+        slopes = np.zeros((self.periods_per_day, cfg.n_segments))
+
+        for t in range(self.periods_per_day):
+            if asset_type == AssetType.COMMUTER:
+                periods_remaining = max(last_available_period - t, 0)
+                max_dischargeable_soc = min(periods_remaining * max_discharge_per_period, 1.0)
+                expected_value = max_dischargeable_soc * cfg.mean_price
+            else:
+                # WFH: uniform time value, only SOC shape varies
+                expected_value = cfg.mean_price
+
+            slopes[t] = expected_value * (2.0 - soc_starts)  # exactly 2x mean at k=0, ~1x at k=n-1
+
+        return slopes
+
     def _get_segment_index(self, soc: float) -> int:
         """Return the segment index containing this SOC value."""
         segment_index = int(soc / self.segment_width)
@@ -165,3 +194,42 @@ class AssetValueFunction:
         for k in range(1, self.config.n_segments):
             if self.slopes[period, k] > self.slopes[period, k - 1]:
                 self.slopes[period, k] = self.slopes[period, k - 1]
+
+
+def make_vfa_registry(
+        config: VFAConfig,
+        periods_per_day: int,
+        last_commuter_departure: int,
+        max_discharge_per_period: float,
+) -> dict[AssetType, AssetValueFunction]:
+    """
+    Construct one VFA per asset type and return as a dict.
+
+    Parameters
+    ----------
+    config:
+        The VFA config.
+    periods_per_day:
+        Number of time periods within a day.
+    last_commuter_departure:
+        Latest expected departure period across commuter assets.
+        Used to initialise the commuter VFA slope taper.
+    max_discharge_per_period:
+        Maximum SOC dischargeable in one period.
+    """
+    return {
+        AssetType.COMMUTER: AssetValueFunction(
+            config=config,
+            asset_type=AssetType.COMMUTER,
+            periods_per_day=periods_per_day,
+            expected_last_plugged_in_period=last_commuter_departure,
+            max_discharge_per_period=max_discharge_per_period,
+        ),
+        AssetType.WFH: AssetValueFunction(
+            config=config,
+            asset_type=AssetType.WFH,
+            periods_per_day=periods_per_day,
+            expected_last_plugged_in_period=periods_per_day - 1,
+            max_discharge_per_period=max_discharge_per_period,
+        ),
+    }

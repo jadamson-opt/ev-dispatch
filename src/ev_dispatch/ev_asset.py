@@ -1,18 +1,25 @@
 """
 Individual EV asset model.
 
-Handles SOC dynamics, availability windows, departure deadlines,
-SOC floor (buffer against unplanned trips), and deadline penalties.
+Supports two asset types:
+- Commuter: plugs in evening, departs morning, single overnight availability window
+- WFH: available most of the day with occasional short random trips
 
-Availability is modelled as a list of windows rather than a single
-plugin/departure pair, allowing for mid-day unplanned trips where
-the EV leaves, returns, and plugs back in before the main departure.
+Availability is modelled as a list of PluginWindows rather than a single
+plugin/departure pair, allowing for gaps in availability from trips.
 
 SoC = State of charge (remaining energy in a battery as a fraction of total capacity)
 """
 
+from enum import StrEnum
+from dataclasses import dataclass, field
+
 import numpy as np
-from dataclasses import dataclass
+
+
+class AssetType(StrEnum):
+    COMMUTER = "commuter"
+    WFH = "wfh"
 
 
 @dataclass
@@ -27,24 +34,55 @@ class PluginWindow:
 @dataclass
 class UserProfile:
     """
-    Statistical description of a user's charging behaviour.
+    Base profile with fields common to all asset types to describe a user's
+    charging behaviour.
+
     Here we treat this as input. In practice, it would be learned /predicted
     from real user data.
 
-    All times are period indices (0–47 for a half-hourly day).
+    All times are period indices (0–47 for a half-hourly day, starting 4pm).
     """
 
+    asset_type: AssetType = field(init=False)
+    return_soc_mean: float = 0.5
+    return_soc_std: float = 0.1
+    unplanned_departure_probability: float = 0.05
+    unplanned_trip_duration_periods: int = 4
+    unplanned_required_soc: float = 0.15
+
+
+@dataclass
+class CommuterProfile(UserProfile):
+    """Profile for a commuter asset with a planned overnight departure."""
+
+    asset_type: AssetType = field(default=AssetType.COMMUTER, init=False)
     plugin_period_mean: float = 4.0  # ~6pm if episode starts at 4pm
     plugin_period_std: float = 1.0
     departure_period_mean: float = 30.0  # ~7am next day
     departure_period_std: float = 1.0
     required_soc: float = 0.8
-    return_soc_mean: float = 0.3  # SOC when they plug in
-    return_soc_std: float = 0.1
-    # unplanned_departure_probability: float = 0.05  # Captures unexpected usage
-    unplanned_departure_probability: float = 0.0
-    unplanned_trip_duration_periods: int = 4  # ~2 hours away
-    unplanned_required_soc: float = 0.15  # Minimum needed for the unplanned trip
+
+
+@dataclass
+class WFHProfile(UserProfile):
+    """Profile for a WFH asset with no planned departure."""
+
+    asset_type: AssetType = field(default=AssetType.WFH, init=False)
+    max_trips: int = 2
+    trip_soc_consumption_mean: float = 0.1
+    trip_soc_consumption_std: float = 0.03
+
+    def sample_trip_soc_consumption(self, rng: np.random.Generator) -> float:
+        """Sample SOC consumed by a single short trip."""
+        return float(
+            np.clip(
+                rng.normal(
+                    self.trip_soc_consumption_mean, self.trip_soc_consumption_std
+                ),
+                0.0,
+                1.0,
+            )
+        )
 
 
 @dataclass
@@ -63,10 +101,9 @@ class EVAsset:
     """
     Simulates a single EV over one day episode.
 
-    At episode start, plugin windows are sampled from the user profile.
-    An unplanned trip inserts a mid-day gap in availability. The asset
-    departs early, returns after a fixed duration, then continues charging
-    until the main planned departure.
+    At episode start, availability windows are sampled from the user profile.
+    Commuters have a single overnight window with a possible unplanned evening
+    trip. WFH users are available most of the day with occasional short trips.
 
     The asset tracks SOC and enforces all feasibility constraints at each timestep.
     """
@@ -89,81 +126,30 @@ class EVAsset:
 
     def reset(self) -> None:
         """
-        Sample a new episode from the user profile.
-
-        Constructs one or two plugin windows depending on whether
-        an unplanned departure occurs today.
+        Sample a new episode from the user profile and constructs PluginWindows.
         """
 
         self._starting_soc = float(
-            np.clip(
-                self._rng.normal(
-                    self.profile.return_soc_mean, self.profile.return_soc_std
+            min(
+                max(
+                    self._rng.normal(
+                        self.profile.return_soc_mean, self.profile.return_soc_std
+                    ),
+                    0.0,
                 ),
-                0.0,
                 1.0,
             )
         )
         self.soc = self._starting_soc
 
-        plugin_period = round(
-            np.clip(
-                self._rng.normal(
-                    self.profile.plugin_period_mean, self.profile.plugin_period_std
-                ),
-                0,
-                47,
-            )
-        )
-
-        planned_departure_period = round(
-            np.clip(
-                self._rng.normal(
-                    self.profile.departure_period_mean,
-                    self.profile.departure_period_std,
-                ),
-                0,
-                47,
-            )
-        )
-
-        unplanned_rand_sample = self._rng.random()
-        has_unplanned_departure = (
-            unplanned_rand_sample < self.profile.unplanned_departure_probability
-        )
-
-        if (
-            has_unplanned_departure
-            and plugin_period
-            < planned_departure_period
-            - self.profile.unplanned_trip_duration_periods
-            - 1
-        ):
-            unplanned_departure = round(plugin_period + self._rng.integers(1, 4))  # leaves within 2 hours of getting home
-            return_period = (
-                unplanned_departure + self.profile.unplanned_trip_duration_periods
-            )
-
-            self.plugin_windows = [
-                PluginWindow(
-                    start_period=plugin_period,
-                    end_period=unplanned_departure,
-                    required_soc=self.profile.unplanned_required_soc,
-                ),
-                PluginWindow(
-                    start_period=return_period,
-                    end_period=planned_departure_period,
-                    required_soc=self.profile.required_soc,
-                ),
-            ]
+        if isinstance(self.profile, CommuterProfile):
+            self.plugin_windows = self._sample_commuter_windows(self.profile)
+        elif isinstance(self.profile, WFHProfile):
+            self.plugin_windows = self._sample_wfh_windows(self.profile)
         else:
-            self.plugin_windows = [
-                PluginWindow(
-                    start_period=plugin_period,
-                    end_period=planned_departure_period,
-                    required_soc=self.profile.required_soc,
-                )
-            ]
+            raise NotImplementedError(
+                f"Unsupported user profile: {self.profile.asset_type}"
+            )
 
     def is_plugged_in(self, period: int) -> bool:
         """Return True if the EV is plugged in during this period."""
@@ -239,6 +225,114 @@ class EVAsset:
             / cfg.battery_capacity_kwh
         )
 
+    def _sample_commuter_windows(self, profile: CommuterProfile) -> list[PluginWindow]:
+        """
+        Sample plugin windows for a commuter asset.
+
+        Produces one overnight window, with a possible short unplanned
+        evening trip creating a gap near the start of the window.
+        """
+        plugin_period = round(
+            np.clip(
+                self._rng.normal(profile.plugin_period_mean, profile.plugin_period_std),
+                0,
+                47,
+            )
+        )
+
+        planned_departure_period = round(
+            np.clip(
+                self._rng.normal(
+                    profile.departure_period_mean,
+                    profile.departure_period_std,
+                ),
+                0,
+                47,
+            )
+        )
+
+        unplanned_rand_sample = self._rng.random()
+        has_unplanned_departure = (
+            unplanned_rand_sample < self.profile.unplanned_departure_probability
+            and plugin_period
+            < planned_departure_period - profile.unplanned_trip_duration_periods - 1
+        )
+
+        if has_unplanned_departure:
+            unplanned_departure = round(
+                plugin_period + self._rng.integers(1, 4)
+            )  # leaves within 2 hours of getting home
+            return_period = (
+                unplanned_departure + profile.unplanned_trip_duration_periods
+            )
+
+            return [
+                PluginWindow(
+                    start_period=plugin_period,
+                    end_period=unplanned_departure,
+                    required_soc=profile.unplanned_required_soc,
+                ),
+                PluginWindow(
+                    start_period=return_period,
+                    end_period=planned_departure_period,
+                    required_soc=profile.required_soc,
+                ),
+            ]
+
+        return [
+            PluginWindow(
+                start_period=plugin_period,
+                end_period=planned_departure_period,
+                required_soc=profile.required_soc,
+            )
+        ]
+
+    def _sample_wfh_windows(self, profile: WFHProfile) -> list[PluginWindow]:
+        """
+        Sample plugin windows for a WFH asset.
+
+        WFH users are plugged in for most of the day with occasional short
+        trips during daytime hours (periods 30–46, roughly 7am to 3pm).
+        Each trip creates a gap in availability.
+        """
+        n_trips = int(self._rng.integers(0, profile.max_trips + 1))
+
+        windows = []
+        current_start = 0
+        current_period = 0
+
+        trip_periods = (
+            sorted(self._rng.integers(30, 46, size=n_trips).tolist())
+            if n_trips > 0
+            else []
+        )
+
+        for trip_start in trip_periods:
+            if trip_start <= current_period:
+                continue
+            trip_end = min(trip_start + profile.unplanned_trip_duration_periods, 47)
+            trip_soc = profile.sample_trip_soc_consumption(self._rng)
+            windows.append(
+                PluginWindow(
+                    start_period=current_start,
+                    end_period=trip_start,
+                    required_soc=trip_soc,
+                )
+            )
+            current_start = trip_end
+            current_period = trip_end
+
+        if current_start < 47:
+            windows.append(
+                PluginWindow(
+                    start_period=current_start,
+                    end_period=47,
+                    required_soc=0.0,
+                )
+            )
+
+        return windows
+
     def _clip_to_feasible(self, action_kw: float) -> float:
         """Clip action to charge/discharge rate limits and SOC bounds."""
         cfg = self.config
@@ -274,6 +368,6 @@ class EVAsset:
             energy_kwh = action_kw * period_hours / cfg.discharge_efficiency
 
         self.soc = float(
-            np.clip(self.soc + energy_kwh / cfg.battery_capacity_kwh, 0.0, 1.0)
+            min(max(self.soc + energy_kwh / cfg.battery_capacity_kwh, 0.0), 1.0)
         )
         return energy_kwh

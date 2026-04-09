@@ -49,6 +49,7 @@ class BasePolicy(ABC):
         total_penalty = 0.0
         soc_history = []
         revenue_history = []
+        penalty_history = []
 
         for period in range(fleet.config.periods_per_day):
             actions = self.select_actions(fleet, prices, period)
@@ -57,12 +58,14 @@ class BasePolicy(ABC):
             total_penalty += result["total_penalty"]
             soc_history.append(result["mean_soc"])
             revenue_history.append(result["revenue"])
+            penalty_history.append(result["total_penalty"])
 
         return {
             "total_revenue": total_revenue,
             "total_penalty": total_penalty,
             "soc_history": soc_history,
             "revenue_history": revenue_history,
+            "penalty_history": penalty_history,
         }
 
 
@@ -85,38 +88,6 @@ class NaiveNightCharger(BasePolicy):
         if self.charge_start_period <= period < self.charge_end_period:
             return np.array([a.config.max_charge_rate_kw for a in fleet.assets])
         return np.zeros(n)
-
-
-class PriceThreshold(BasePolicy):
-    """
-    Charges when price is below a low threshold, discharges above a high threshold.
-
-    A simple price-responsive policy with no lookahead.
-    The thresholds are fixed parameters, not learned.
-    """
-
-    def __init__(self, charge_below: float = 60.0, discharge_above: float = 120.0, soc_floor: float = 0.2):
-        self.charge_below = charge_below  # £/MWh
-        self.discharge_above = discharge_above
-        self.soc_floor = soc_floor  # Rule to prevent discharging below the floor
-
-    def select_actions(
-        self, fleet: Fleet, prices: np.ndarray, period: int
-    ) -> np.ndarray:
-        current_price = prices[period]
-        actions = []
-
-        for asset in fleet.assets:
-            if not asset.is_plugged_in(period):
-                actions.append(0.0)
-            elif current_price < self.charge_below:
-                actions.append(asset.config.max_charge_rate_kw)
-            elif current_price > self.discharge_above and asset.soc > self.soc_floor:
-                actions.append(-asset.config.max_discharge_rate_kw)
-            else:
-                actions.append(0.0)
-
-        return np.array(actions)
 
 
 class ForesightGreedy(BasePolicy):

@@ -1,8 +1,8 @@
-
 import cProfile
-import pstats
 import io
+import pstats
 from functools import wraps
+
 
 def profile(func):
     @wraps(func)
@@ -12,7 +12,8 @@ def profile(func):
         result = func(*args, **kwargs)
         pr.disable()
         s = io.StringIO()
-        pstats.Stats(pr, stream=s).sort_stats('cumulative').print_stats(20)
-        pr.dump_stats('profiler_out_3.prof')
+        pstats.Stats(pr, stream=s).sort_stats("cumulative").print_stats(20)
+        pr.dump_stats("profiler_out_3.prof")
         return result
+
     return wrapper

@@ -5,20 +5,20 @@ Usage:
     uv run scripts/run_adp.py
 """
 
-from ev_dispatch.price_process import PriceProcess, PriceProcessConfig
+from ev_dispatch.adp import ADPConfig, ADPPolicy, ADPTrainer
+from ev_dispatch.baseline import ForesightGreedy, NaiveNightCharger
 from ev_dispatch.ev_asset import EVConfig
-from ev_dispatch.fleet import Fleet, FleetConfig
-from ev_dispatch.baseline import NaiveNightCharger, ForesightGreedy
-from ev_dispatch.adp import ADPTrainer, ADPConfig, ADPPolicy
-from ev_dispatch.value_function import VFAConfig
 from ev_dispatch.evaluation import (
     evaluate_policies,
-    plot_revenue_distributions,
     plot_example_episode,
+    plot_revenue_distributions,
     plot_shadow_prices,
     plot_training_convergence,
     print_summary,
 )
+from ev_dispatch.fleet import Fleet, FleetConfig
+from ev_dispatch.price_process import PriceProcess, PriceProcessConfig
+from ev_dispatch.value_function import VFAConfig
 
 TRAIN_SEED = 42
 EVAL_SEED = 99
@@ -52,7 +52,10 @@ def main() -> None:
         "Naive": NaiveNightCharger(),
         "Foresight": ForesightGreedy(),
         "ADP": ADPPolicy(
-            vfa_registry, epsilon=0.0, forcing_buffer=ADPConfig.forcing_buffer, soc_floor=ADPConfig.soc_floor
+            vfa_registry,
+            epsilon=0.0,
+            forcing_buffer=ADPConfig.forcing_buffer,
+            soc_floor=ADPConfig.soc_floor,
         ),
     }
 
@@ -66,7 +69,9 @@ def main() -> None:
     plot_revenue_distributions(results).show()
     plot_example_episode(policies, fleet, example_prices).show()
     plot_shadow_prices(vfa_registry).show()
-    plot_training_convergence(trainer.episode_penalised_revenues, trainer.episode_arbitrage_revenues).show()
+    plot_training_convergence(
+        trainer.episode_penalised_revenues, trainer.episode_arbitrage_revenues
+    ).show()
 
 
 if __name__ == "__main__":

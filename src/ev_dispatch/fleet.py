@@ -10,10 +10,11 @@ means sampled from U(28, 32) and std devs from U(1, 2), giving some
 heterogeneity across the fleet.
 """
 
-import numpy as np
 from dataclasses import dataclass
 
-from ev_dispatch.ev_asset import EVAsset, EVConfig, CommuterProfile, WFHProfile
+import numpy as np
+
+from ev_dispatch.ev_asset import CommuterProfile, EVAsset, EVConfig, WFHProfile
 
 
 @dataclass
@@ -98,9 +99,7 @@ class Fleet:
             asset_energies_kwh: Array of shape (n_assets,) with asset charge/discharge in kwh
         """
         plugged_in_mask = np.array([a.is_plugged_in(period) for a in self.assets])
-        scaled_actions = self._apply_portfolio_buffer(
-            requested_actions_kw, period
-        )
+        scaled_actions = self._apply_portfolio_buffer(requested_actions_kw, period)
 
         total_energy_kwh = 0.0
         total_penalty = 0.0
@@ -136,7 +135,9 @@ class Fleet:
             if a.is_plugged_in(period) and a.soc > 0
         )
 
-    def _sample_profile(self, asset_index: int, config: FleetConfig) -> CommuterProfile | WFHProfile:
+    def _sample_profile(
+        self, asset_index: int, config: FleetConfig
+    ) -> CommuterProfile | WFHProfile:
         """
         Sample an individual user profile for one asset.
 
@@ -154,7 +155,9 @@ class Fleet:
             departure_period_std=1.0,
         )
 
-    def _apply_portfolio_buffer(self, requested_actions_kw: np.ndarray, period: int) -> np.ndarray:
+    def _apply_portfolio_buffer(
+        self, requested_actions_kw: np.ndarray, period: int
+    ) -> np.ndarray:
         """
         Scale discharge actions down to respect the portfolio buffer.
 
@@ -175,7 +178,9 @@ class Fleet:
         net_discharge_kw = -np.sum(requested_actions_kw)
 
         if net_discharge_kw > max_net_discharge_kw:
-            scale = max(0.0, max_net_discharge_kw + (total_discharge_kw - net_discharge_kw)) / (total_discharge_kw + 1e-9)
+            scale = max(
+                0.0, max_net_discharge_kw + (total_discharge_kw - net_discharge_kw)
+            ) / (total_discharge_kw + 1e-9)
             scaled = requested_actions_kw.copy()
             scaled[requested_actions_kw < 0] *= scale
             return scaled

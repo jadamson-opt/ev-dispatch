@@ -6,10 +6,11 @@ Three policies:
 - PriceThreshold: charges below a fixed price, discharges above another
 - HindsightOptimal: solves the dispatch problem with perfect price foresight
 """
+
 import math
+from abc import ABC, abstractmethod
 
 import numpy as np
-from abc import ABC, abstractmethod
 
 from ev_dispatch.fleet import Fleet
 
@@ -162,10 +163,13 @@ class ForesightGreedy(BasePolicy):
         for window in asset.plugin_windows:
             if window.start_period <= period < window.end_period:
                 periods_remaining = window.end_period - period
-                periods_required = math.ceil((window.required_soc - asset.soc) / asset.max_charge_per_period) + 1
-                if (
-                    periods_remaining <= periods_required > 0
-                ):
+                periods_required = (
+                    math.ceil(
+                        (window.required_soc - asset.soc) / asset.max_charge_per_period
+                    )
+                    + 1
+                )
+                if periods_remaining <= periods_required > 0:
                     return True
         return False
 

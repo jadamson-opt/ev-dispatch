@@ -11,8 +11,8 @@ plugin/departure pair, allowing for gaps in availability from trips.
 SoC = State of charge (remaining energy in a battery as a fraction of total capacity)
 """
 
-from enum import StrEnum
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 import numpy as np
 

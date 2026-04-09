@@ -11,13 +11,13 @@ Expected sanity checks:
 - Mean SOC trajectories look physically reasonable
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
-from ev_dispatch.price_process import PriceProcess, PriceProcessConfig
-from ev_dispatch.ev_asset import EVConfig, UserProfile
+from ev_dispatch.baseline import ForesightGreedy, NaiveNightCharger
+from ev_dispatch.ev_asset import EVConfig
 from ev_dispatch.fleet import Fleet, FleetConfig
-from ev_dispatch.baseline import NaiveNightCharger, PriceThreshold, ForesightGreedy
+from ev_dispatch.price_process import PriceProcess, PriceProcessConfig
 
 N_SCENARIOS = 100
 SEED = 42
@@ -27,14 +27,16 @@ def run_policy_over_scenarios(policy, fleet, scenarios):
     revenues, penalties = [], []
     for idx, prices in enumerate(scenarios):
         result = policy.run_episode(fleet, prices)
-        revenues.append(result["total_revenue"])
+        revenues.append(result["total_penalised_revenue"])
         penalties.append(result["total_penalty"])
     return np.array(revenues), np.array(penalties)
 
 
 def print_summary(name: str, revenues: np.ndarray, penalties: np.ndarray) -> None:
     print(f"\n{name}")
-    print(f"  Revenue   mean={revenues.mean():.2f}  std={revenues.std():.2f}  min={revenues.min():.2f}  max={revenues.max():.2f}")
+    print(
+        f"  Revenue   mean={revenues.mean():.2f}  std={revenues.std():.2f}  min={revenues.min():.2f}  max={revenues.max():.2f}"
+    )
     print(f"  Penalties mean={penalties.mean():.2f}  std={penalties.std():.2f}")
 
 
@@ -78,8 +80,7 @@ def main():
 
     fleet_config = FleetConfig(n_assets=50)
     asset_config = EVConfig()
-    user_profile = UserProfile()
-    fleet = Fleet(fleet_config, asset_config, user_profile, seed=SEED)
+    fleet = Fleet(fleet_config, asset_config, seed=SEED)
 
     naive = NaiveNightCharger()
     hindsight = ForesightGreedy()

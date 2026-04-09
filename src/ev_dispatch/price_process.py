@@ -13,8 +13,9 @@ The diurnal shape reflects typical UK day-ahead prices (episode starts at 4pm):
 Prices are in £/MWh over 48 half-hour periods (one day).
 """
 
-import numpy as np
 from dataclasses import dataclass, field
+
+import numpy as np
 
 from ev_dispatch import FloatArray
 
@@ -32,7 +33,9 @@ class PriceProcessConfig:
 
     # Daily shape: additive offsets (£/MWh) applied per period.
     # Default produces a realistic UK-style evening and morning peak.
-    daily_cycle_offsets: list[float] = field(default_factory=lambda: _default_daily_cycle_offsets())
+    daily_cycle_offsets: list[float] = field(
+        default_factory=lambda: _default_daily_cycle_offsets()
+    )
 
 
 def _default_daily_cycle_offsets() -> list[float]:
@@ -47,11 +50,11 @@ def _default_daily_cycle_offsets() -> list[float]:
       periods 36-48:  midday plateau (~10am-4pm), 0
     """
     offsets = np.zeros(48)
-    offsets[0:8] = 80.0                           # 4pm-8pm evening peak
+    offsets[0:8] = 80.0  # 4pm-8pm evening peak
     offsets[8:16] = np.linspace(80.0, -20.0, 8)  # 8pm-midnight decline
-    offsets[16:28] = -20.0                        # midnight-6am trough
-    offsets[28:36] = np.linspace(-20.0, 40.0, 8) # 6am-10am morning ramp
-    offsets[36:48] = 0.0                          # 10am-4pm midday plateau
+    offsets[16:28] = -20.0  # midnight-6am trough
+    offsets[28:36] = np.linspace(-20.0, 40.0, 8)  # 6am-10am morning ramp
+    offsets[36:48] = 0.0  # 10am-4pm midday plateau
     return offsets.tolist()
 
 
@@ -87,7 +90,9 @@ class PriceProcess:
             reversion = cfg.mean_reversion_speed * (cfg.mean_price - current_price)
             noise = cfg.volatility * self.rng.standard_normal()
             jump = self._sample_jump()
-            current_price = current_price + self._daily_cycle_offsets[t] + reversion + noise + jump
+            current_price = (
+                current_price + self._daily_cycle_offsets[t] + reversion + noise + jump
+            )
             prices[t] = max(current_price, 0.0)
 
         return prices

@@ -15,9 +15,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from ev_dispatch import FloatArray
+from ev_dispatch.baseline import BasePolicy
 from ev_dispatch.ev_asset import AssetType
 from ev_dispatch.fleet import Fleet
-from ev_dispatch.baseline import BasePolicy
 from ev_dispatch.value_function import AssetValueFunction
 
 
@@ -73,11 +73,13 @@ def plot_revenue_distributions(results: dict[str, dict]) -> go.Figure:
     """
     fig = go.Figure()
     for name, metrics in results.items():
-        fig.add_trace(go.Box(
-            y=metrics["revenues"],
-            name=name,
-            boxmean=True,
-        ))
+        fig.add_trace(
+            go.Box(
+                y=metrics["revenues"],
+                name=name,
+                boxmean=True,
+            )
+        )
 
     fig.update_layout(
         title="Revenue Distribution by Policy",
@@ -102,12 +104,11 @@ def plot_example_episode(
     legend controls visibility across all traces.
     """
     hours = np.arange(periods_per_day) * 0.5
-    colours = [
-        "steelblue", "crimson", "seagreen", "darkorange", "mediumpurple"
-    ]
+    colours = ["steelblue", "crimson", "seagreen", "darkorange", "mediumpurple"]
 
     fig = make_subplots(
-        rows=4, cols=1,
+        rows=4,
+        cols=1,
         shared_xaxes=True,
         subplot_titles=(
             "Electricity Price",
@@ -119,36 +120,59 @@ def plot_example_episode(
     )
 
     fig.add_trace(
-        go.Scatter(x=hours, y=prices, name="Price", line=dict(color="grey"),
-                   showlegend=False),
-        row=1, col=1,
+        go.Scatter(
+            x=hours, y=prices, name="Price", line=dict(color="grey"), showlegend=False
+        ),
+        row=1,
+        col=1,
     )
 
     for (name, policy), colour in zip(policies.items(), colours):
         episode = policy.run_episode(fleet, prices)
         cumulative_revenue = np.cumsum(episode["revenue_history"])
         arbitrage_history = [
-            r + p for r, p in zip(episode["revenue_history"], episode["penalty_history"])
+            r + p
+            for r, p in zip(episode["revenue_history"], episode["penalty_history"])
         ]
         cumulative_arbitrage = np.cumsum(arbitrage_history)
 
         # SOC — show in legend
         fig.add_trace(
-            go.Scatter(x=hours, y=episode["soc_history"], name=name,
-                       line=dict(color=colour), legendgroup=name),
-            row=2, col=1,
+            go.Scatter(
+                x=hours,
+                y=episode["soc_history"],
+                name=name,
+                line=dict(color=colour),
+                legendgroup=name,
+            ),
+            row=2,
+            col=1,
         )
         # Revenue — same colour, linked to same legend entry
         fig.add_trace(
-            go.Scatter(x=hours, y=cumulative_revenue, name=name,
-                       line=dict(color=colour), legendgroup=name, showlegend=False),
-            row=3, col=1,
+            go.Scatter(
+                x=hours,
+                y=cumulative_revenue,
+                name=name,
+                line=dict(color=colour),
+                legendgroup=name,
+                showlegend=False,
+            ),
+            row=3,
+            col=1,
         )
         # Arbitrage revenue — same colour, linked to same legend entry
         fig.add_trace(
-            go.Scatter(x=hours, y=cumulative_arbitrage, name=name,
-                       line=dict(color=colour), legendgroup=name, showlegend=False),
-            row=4, col=1,
+            go.Scatter(
+                x=hours,
+                y=cumulative_arbitrage,
+                name=name,
+                line=dict(color=colour),
+                legendgroup=name,
+                showlegend=False,
+            ),
+            row=4,
+            col=1,
         )
 
     fig.update_xaxes(title_text="Hours from 4pm", row=4, col=1)
@@ -165,8 +189,8 @@ def plot_example_episode(
 
 
 def plot_shadow_prices(
-        vfa_registry: dict[AssetType, AssetValueFunction],
-        periods_to_plot: list[int] | None = None
+    vfa_registry: dict[AssetType, AssetValueFunction],
+    periods_to_plot: list[int] | None = None,
 ) -> go.Figure:
     """
     Plot VFA shadow price curves (slopes) across SOC for selected periods.
@@ -187,7 +211,8 @@ def plot_shadow_prices(
 
     asset_types = list(vfa_registry.keys())
     fig = make_subplots(
-        rows=1, cols=len(asset_types),
+        rows=1,
+        cols=len(asset_types),
         subplot_titles=[f"{at.value.upper()} VFA" for at in asset_types],
     )
 
@@ -206,7 +231,8 @@ def plot_shadow_prices(
                     showlegend=(col == 1),
                     mode="lines+markers",
                 ),
-                row=1, col=col,
+                row=1,
+                col=col,
             )
 
     fig.update_xaxes(title_text="State of Charge")
@@ -219,9 +245,9 @@ def plot_shadow_prices(
 
 
 def plot_training_convergence(
-        episode_revenues: list[float],
-        episode_arbitrage_revenues: list[float],
-        window: int = 50
+    episode_revenues: list[float],
+    episode_arbitrage_revenues: list[float],
+    window: int = 50,
 ) -> go.Figure:
     """
     Plot ADP training convergence as rolling means of total and arbitrage revenue.
@@ -242,22 +268,40 @@ def plot_training_convergence(
     rolling_episodes = np.arange(window, len(total) + 1)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=episodes, y=total,
-        name="Total Revenue", line=dict(color="lightcoral"), opacity=0.3,
-    ))
-    fig.add_trace(go.Scatter(
-        x=episodes, y=arbitrage,
-        name="Arbitrage Revenue", line=dict(color="lightblue"), opacity=0.3,
-    ))
-    fig.add_trace(go.Scatter(
-        x=rolling_episodes, y=rolling_total,
-        name=f"Total Rolling Mean (n={window})", line=dict(color="crimson", width=2),
-    ))
-    fig.add_trace(go.Scatter(
-        x=rolling_episodes, y=rolling_arbitrage,
-        name=f"Arbitrage Rolling Mean (n={window})", line=dict(color="steelblue", width=2),
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=episodes,
+            y=total,
+            name="Total Revenue",
+            line=dict(color="lightcoral"),
+            opacity=0.3,
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=episodes,
+            y=arbitrage,
+            name="Arbitrage Revenue",
+            line=dict(color="lightblue"),
+            opacity=0.3,
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=rolling_episodes,
+            y=rolling_total,
+            name=f"Total Rolling Mean (n={window})",
+            line=dict(color="crimson", width=2),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=rolling_episodes,
+            y=rolling_arbitrage,
+            name=f"Arbitrage Rolling Mean (n={window})",
+            line=dict(color="steelblue", width=2),
+        )
+    )
 
     fig.update_layout(
         title="ADP Training Convergence",
@@ -269,12 +313,16 @@ def plot_training_convergence(
 
 def print_summary(results: dict[str, dict]) -> None:
     """Print a tabular revenue and penalty summary across policies."""
-    print(f"\n{'Policy':<20} {'Mean Rev':>10} {'Std Rev':>10} {'Min Rev':>10} {'Max Rev':>10} {'Mean Pen':>10}")
+    print(
+        f"\n{'Policy':<20} {'Mean Rev':>10} {'Std Rev':>10} {'Min Rev':>10} {'Max Rev':>10} {'Mean Pen':>10}"
+    )
     print("-" * 72)
     for name, metrics in results.items():
         rev = metrics["revenues"]
         pen = metrics["penalties"]
-        print(f"{name:<20} {rev.mean():>10.2f} {rev.std():>10.2f} {rev.min():>10.2f} {rev.max():>10.2f} {pen.mean():>10.2f}")
+        print(
+            f"{name:<20} {rev.mean():>10.2f} {rev.std():>10.2f} {rev.min():>10.2f} {rev.max():>10.2f} {pen.mean():>10.2f}"
+        )
 
 
 def _period_to_clock(period: int) -> str:

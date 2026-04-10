@@ -22,8 +22,12 @@ lint.select = ["E", "F", "I"]  # Eenable pycodestyle (E), pyflakes (F), isort (I
 lint.ignore = ["E501"]  # Ignoring since black already enforces line length on code. Avoids errors on docs
 fix = true                # Automatically apply fixes
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [dependency-groups]
 dev = [
     "black>=26.3.1",
+    "pytest>=9.0.3",
     "ruff>=0.15.10",
 ]

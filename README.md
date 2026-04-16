@@ -2,6 +2,8 @@
 
 A prototype implementation of Approximate Dynamic Programming (ADP) for optimal dispatch of a distributed fleet of electric vehicles (EVs). The system learns when to charge and discharge EVs to maximise arbitrage revenue from electricity price variation, while ensuring vehicles are sufficiently charged for their users' journeys.
 
+The trained ADP policy achieved median episode revenue of £2,350 across a heterogeneous 500-asset fleet, a ~9% improvement over the heuristic initialisation (£2,158) after 2000 training episodes (< 5 minutes), reaching ~78% of the perfect-foresight upper bound (£3,009).
+
 ## Contents
 
 - [Problem Overview](#problem-overview)
